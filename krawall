@@ -1,0 +1,273 @@
+#!/bin/bash
+# -------------------------------------------------------
+# @author X4
+# @version 1.6.30
+#
+# HowTo:
+# You can add a new GlobalHotkey to the media forward an back buttons for example.
+# There are other ways to run this script: Button or Keypresses, Plasmoids, Events..
+#
+# Use these parameters when on XFCE for example:
+#   calling "./krawall --xfce --prev" should return the previous wallpaper in the stack
+#   calling "./krawall --xfce --next" should return the next wallpaper in the stack
+#
+# For KDE4 you have to set your wallpaper manually per desktop to (sorry 2 lazy to write a cpp tool):
+# $WALLPAPER_PATH/krawall/$DESKTOP_NUMBER
+#
+#
+# TODO:
+#   [ ] Get --prev --next working with reliable history
+#   [x] Switch to different Wallpaper on each Virtual-Desktop (Only for e17 atm).
+#   [x] Get the call_enlightenment function to work for the Enlightenment Desktop.
+#   [x] Get the call_kde4 function for KDE4 to work without a restart of the plasma desktop. run some ./qt_cpp maybe?
+#   [x] I think I should cache the result of $WALLPAPER for faster switching of wallpapers.
+# -------------------------------------------------------
+set -e
+
+# Set the path to your own wallpaper directory
+WALLPAPER_PATH="$HOME/Bilder/Sample Pictures"
+
+
+#########################################################
+ # display usage
+usage() {
+    printf "%s\n\n%s" \
+    "$0 is an experimental wallpaper changer that works with most Linux Desktops."\
+    "Usage: $0 [arguments]"\
+
+    printf "\n  %s\t\t%s" \
+    "-p (--prev)"	"Show previous Wallpaper"\
+    "-n (--next)"	"Show next Wallpaper"\
+    "-s (--rescan)"	"Rescan Wallpaper directories" \
+    "-r (--resort)"	"Randomize Wallpaper list" \
+    "-z (--random)"	"Rescan and Randomize Wallpaper directories"
+    printf "\n"
+
+    printf "\n  %s\t\tSetup for the %s" \
+    "--xfce"		"XFCE4-Desktop"\
+    "--hacker"		"i3 or xmonad Desktop"\
+    "--gnome2"		"GNOME2-Desktop"\
+    "--gnome3"		"GNOME3-Desktop"\
+    "--kde3"		"KDE3-Desktop"\
+    "--kde4"		"KDE4-Desktop (experimental)"\
+    "--edesk"		"Enlightenment Desktop"
+    printf "\n"
+}
+
+create_queue() {
+    if [[ ! -d "$WALLPAPER_PATH/krawall" ]] ; then
+	mkdir -p "$WALLPAPER_PATH/krawall/"
+    fi
+    find "$WALLPAPER_PATH/" -type f -iregex ".*\.\(jpg\|gif\|png\|jpeg\)$" > "$WALLPAPER_PATH/krawall/queue"
+}
+
+shuffle_wallpapers() {
+    if [[ ! -f "$WALLPAPER_PATH/krawall/previous" ]] ; then
+	create_queue
+    fi
+    if [[ -f "$WALLPAPER_PATH/krawall/current" ]] ; then
+	cp -f "$WALLPAPER_PATH/krawall/current" "$WALLPAPER_PATH/krawall/previous"
+    fi
+    cat "$WALLPAPER_PATH/krawall/queue" | shuf -n 1 > "$WALLPAPER_PATH/krawall/current"
+}
+
+# if less than two arguments supplied, display usage
+if [[  $1 == "" ]] ; then
+    usage
+    exit 1
+fi
+
+krawall ()
+{
+    local needle=$1
+    shift
+    while [[ $1 == -* ]]
+    do
+        # By convention, "--" means end of options.
+        case "$1" in
+            --)      return 1 ;;
+            $needle) return 0 ;;
+        esac
+
+        shift
+    done
+    return 1
+}
+
+# Show the user some help when -h or --help is supplied
+krawall -h "$@" || krawall --help "$@" &&
+    usage
+
+# shuffle wallpaper queue, or create it when it there is none
+if [[ ! -f "$WALLPAPER_PATH/krawall/queue" ]] ; then
+    create_queue
+else
+    krawall -p "$@" || krawall --prev "$@" &&
+	NEXT_WALLPAPER="$(cat "$WALLPAPER_PATH/krawall/previous" 2>/dev/null)" &&
+	printf "%s\n" "Switching to previous Wallpapers."
+
+    krawall -n "$@" || krawall --next "$@" &&
+	shuffle_wallpapers &&
+	NEXT_WALLPAPER="$(cat "$WALLPAPER_PATH/krawall/current" 2>/dev/null)" &&
+	printf "%s\n" "Switching to next Wallpapers."
+
+    krawall -s "$@" || krawall --rescan "$@" &&
+	printf "%s\n" "rescan is set" &&
+	rm -f "$WALLPAPER_PATH/krawall/queue" > /dev/null &&
+	create_queue &&
+	printf "%s\n" "Successfully created the wallpaper list."
+	
+    krawall -r "$@" || krawall --resort "$@" &&
+	shuffle_wallpapers &&
+	printf "%s\n" "Successfully randomized the wallpaper list."
+	
+    krawall -z "$@" || krawall --random "$@" &&
+    	rm -f "$WALLPAPER_PATH/krawall/queue" > /dev/null &&
+	create_queue &&
+	shuffle_wallpapers &&
+	printf "%s\n" "Successfully created and randomized the wallpaper list." &&
+	kdialog --passivepopup "Successfully created and randomized the wallpaper list." 2
+
+fi
+
+FILENAME=$(echo "$NEXT_WALLPAPER" | sed 's:.*/::')
+
+call_xfce() {
+    xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-path -s "$NEXT_WALLPAPER"
+    printf "%s\n" "xfce is set"
+}
+
+call_xmonad_i3() {
+    feh --bg-scale "$NEXT_WALLPAPER"
+    printf "%s\n" "i3/xmonad is set"
+}
+
+call_gnome2() {
+    gconftool-2 --set /desktop/gnome/background/picture_filename --type string "$NEXT_WALLPAPER"
+    printf "%s\n" "gnome2 is set"
+}
+
+call_gnome3() {
+    gsettings set org.gnome.desktop.background picture-uri "file://$NEXT_WALLPAPER"
+    printf "%s\n" "gnome3 is set"
+}
+
+call_kde3() {
+    dcop kdesktop KBackgroundIface setWallpaper "$NEXT_WALLPAPER" 1
+    printf "%s\n" "kde3 is set"
+}
+
+call_kde4() {
+desktop_count=4
+curr_desktop=$(qdbus org.kde.kwin /KWin currentDesktop)
+
+if [[ ! -d "$WALLPAPER_PATH/krawall" ]] ; then
+    for ((x=1; x<desktop_count+1; x++)); do
+	mkdir -p "$WALLPAPER_PATH/krawall/$x"
+	touch 	 "$WALLPAPER_PATH/krawall/$x/wallpaper.png"
+    done
+else
+    if [[ ${NEXT_WALLPAPER: -4} != ".png" ]]; then
+	convert -quality 1 -quiet "$NEXT_WALLPAPER" "$WALLPAPER_PATH/krawall/$curr_desktop/wallpaper.png"
+    else
+	cp -f "$NEXT_WALLPAPER"  "$WALLPAPER_PATH/krawall/$curr_desktop/wallpaper.png"
+    fi
+    printf "%s\n" "kde4 wallpaper is set"
+fi
+
+}
+
+# forked from: https://gist.github.com/rumia/4565562#file-imgtoedj-sh-L8
+call_enlightenment() {
+
+    OUTPUT_DIR="$HOME/.e/e/backgrounds"
+    TEMPLATE='
+    images { image: "@IMAGE@" USER; }
+    collections {
+      group {
+	  name: "e/desktop/background";
+	  data { item: "style" "4"; item: "noanimation" "1"; }
+	  max: @WIDTH@ @HEIGHT@;
+	  parts {
+	    part {
+		name: "bg";
+		mouse_events: 0;
+		description {
+		  state: "default" 0.0;
+		  aspect: @ASPECT@ @ASPECT@;
+		  aspect_preference: NONE;
+		  image { normal: "@IMAGE@"; scale_hint: STATIC; }
+		}
+	    }
+	  }
+      }
+    }
+    '
+
+    #-desktop-bg-add OPT1 OPT2 OPT3 OPT4 OPT5 Add a desktop bg definition.
+    # OPT1 = ContainerNo OPT2 = ZoneNo OPT3 = Desk_x. OPT4 = Desk_y. OPT5 = bg file path
+    desk_x_count=$(enlightenment_remote -desktops-get | awk '{print $1}')
+    desk_y_count=$(enlightenment_remote -desktops-get | awk '{print $2}')
+
+    for ((x=0; x<$desk_x_count; x++)); do
+	for ((y=0; y<$desk_y_count; y++)); do
+
+	    shuffle_wallpapers
+	    NEXT_WALLPAPER="$(cat "$WALLPAPER_PATH/krawall/current" 2>/dev/null)"
+	    FILENAME=$(echo "$NEXT_WALLPAPER" | sed 's:.*/::')
+	    #echo "$x" "$y $OUTPUT_DIR/${FILENAME%%.*}.edj"
+
+	    DIMENSION="$(identify -format "%w/%h" "$NEXT_WALLPAPER")"
+	    if [ ! -z "$DIMENSION" ]; then
+		WIDTH=$(echo $DIMENSION | cut -d/ -f1)
+		HEIGHT=$(echo $DIMENSION | cut -d/ -f2)
+		IMAGE="$(echo "$NEXT_WALLPAPER" | sed 's/[^[:alnum:]_-]/\\&/g')"
+		if [ -z "$HEIGHT" -o "$HEIGHT" = "0" ]; then
+		    ASPECT="0.0"
+		else
+		    ASPECT=$(echo "scale=9; $DIMENSION" | bc)
+		fi
+
+		printf "%s" "$TEMPLATE" | \
+		sed "s/@ASPECT@/$ASPECT/g; s/@WIDTH@/$WIDTH/g; s/@HEIGHT@/$HEIGHT/g; s|@IMAGE@|$IMAGE|g" > "$WALLPAPER_PATH/krawall/krawall.edc"
+		edje_cc -nothreads "$WALLPAPER_PATH/krawall/krawall.edc" -o "$OUTPUT_DIR/${FILENAME%%.*}.edj" 2>/dev/null
+		rm "$WALLPAPER_PATH/krawall/krawall.edc"
+		#echo "Compiled $OUTPUT_DIR/${FILENAME%%.*}.edj"
+	    fi
+
+	    enlightenment_remote -desktop-bg-del 0 0 "$x" "$y"
+	    enlightenment_remote -desktop-bg-add 0 0 "$x" "$y" $OUTPUT_DIR/${FILENAME%%.*}.edj;
+	done;
+    done
+
+    printf "%s\n" "enlightenment is set"
+}
+
+
+# Change wallpaper when xfce4-desktop is set.
+krawall --xfce "$@" &&
+    call_xfce
+
+# Change wallpaper when xfce4-desktop i3 or xmonad is set.
+krawall --hacker "$@" || krawall --xmonad "$@" || krawall --i3 "$@" &&
+    call_xmonad_i3
+
+# Change wallpaper when gnome2 is set.
+krawall --gnome2 "$@" &&
+    call_gnome2
+
+# Change wallpaper when gnome3 is set.
+krawall --gnome3 "$@" &&
+    call_gnome3
+
+# Change wallpaper when kde3 is set.
+krawall --kde3 "$@" &&
+    call_kde3
+
+# Change wallpaper when kde4 is set.
+krawall --kde4 "$@" &&
+    call_kde4
+
+# Change wallpaper when enlightenment is set.
+krawall --e17 "$@" || krawall --edesk "$@" &&
+    call_enlightenment
