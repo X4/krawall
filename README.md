@@ -38,7 +38,7 @@ Experimental Wallpaper Changer that works with most desktops.
       ./krawall --xfce -n # should return the next wallpaper in the stack
 
 #### HowTo:
- Add a new GlobalHotkeys to your preferred _buttons_ and run *krawall* as required.
+ Add new GlobalHotkeys to your preferred _buttons_ and run *krawall* as required.
  There are other ways to invoke this script: Button and Keypresses, Plasmoids, Events..
  You can use the tools given by your Desktop Environment to invoke this script.
 
